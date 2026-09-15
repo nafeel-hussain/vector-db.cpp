@@ -1,4 +1,6 @@
+#pragma once
 #include <iostream>
+#include <algorithm>
 #include <queue>
 #include <vector>
 #include "vector.hpp"

@@ -1,4 +1,5 @@
 #include"vector.hpp"
+#include"limits"
 using namespace std;
 
 collection :: collection(uint32_t dim): dim(dim){}
