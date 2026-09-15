@@ -1,7 +1,7 @@
 #include"vector.hpp"
 using namespace std;
 
-collection :: collection(int dim): dim(dim){}
+collection :: collection(uint32_t dim): dim(dim){}
 
 bool collection::insert_vector(const string &id, const vector<float> &inputVector){
     if(maps.count(id))
