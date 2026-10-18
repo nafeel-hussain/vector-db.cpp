@@ -36,6 +36,21 @@ void CLI::print_neighbors(const std::vector<Neighbor>& results) {
     }
 }
 
+Index* CLI::select_index(const std::string& method) {
+    if (method == "bf") {
+        return &index;
+    }
+    if (method == "ivf") {
+        if (!ivfIndex) {
+            std::cout << "ERROR: ivf index not built yet - run 'build_ivf <nlist> <nprobe>' first\n";
+            return nullptr;
+        }
+        return ivfIndex.get();
+    }
+    std::cout << "ERROR: unknown method '" << method << "' (expected 'bf' or 'ivf')\n";
+    return nullptr;
+}
+
 void CLI::print_help() const {
     std::cout <<
         "Commands:\n"
@@ -43,10 +58,11 @@ void CLI::print_help() const {
         "  bulk_insert <path.csv>              insert many; each line \"id,v1,v2,...\"\n"
         "  remove <id>                         delete by id\n"
         "  get <id>                            print the stored vector for id\n"
-        "  query <v1,v2,...,vN> <k>            top-k nearest neighbors (brute-force)\n"
-        "  benchmark <numVectors> <k> [label]  scale benchmark -> BENCHMARKS.md\n"
+        "  query <bf|ivf> <v1,...,vN> <k>      top-k nearest neighbors via the chosen method\n"
+        "  build_ivf <nlist> <nprobe>          (re)build the IVF index from current data\n"
+        "  benchmark <numVectors> <k> [label]  scale benchmark -> BENCHMARKS.md (brute-force)\n"
         "  load <path>                   bulk-load a .fvecs file (ids = row index)\n"
-        "  recall <q.fvecs> <gt.ivecs> <k> [n]  recall@k against groundtruth\n"
+        "  recall <bf|ivf> <q.fvecs> <gt.ivecs> <k> [n] [label]  recall@k against groundtruth\n"
         "  stats                               size / dimension / estimated memory\n"
         "  help                                show this list\n"
         "  exit | quit                         leave the REPL\n";
@@ -178,7 +194,7 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
         auto vectors = read_fvecs(path);
         std::cout << "Read " << vectors.size() << " vectors";
         if (!vectors.empty()) std::cout << " (dim=" << vectors[0].size() << ")";
-        std::cout << ". Inserting (ids = row index, required for recall_fvecs to line up "
+        std::cout << ". Inserting (ids = row index, required for recall to line up "
                      "with the groundtruth file)...\n";
 
         size_t inserted = 0;
@@ -205,6 +221,12 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
                   << ms << " ms total, " << (ms / static_cast<double>(std::max<size_t>(1, vectors.size())))
                   << " ms/vector avg)\n";
 
+        if (ivfIndex) {
+            std::cout << "NOTE: new data was inserted but the existing IVF index was NOT rebuilt - "
+                         "its inverted lists don't include these vectors. Run 'build_ivf' again if you "
+                         "want 'query ivf' / 'recall ivf' to see them.\n";
+        }
+
         auto insertStats = BenchmarkRunner::compute_stats(insertLatencies);
 
         BenchmarkResult result;
@@ -214,7 +236,7 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
         result.dimension = coll._dim();
         result.k = 0; // not a query benchmark
         result.insertLatency = insertStats;
-        result.recallAtK = -1.0; // n/a — load_fvecs doesn't run queries
+        result.recallAtK = -1.0; // n/a — load doesn't run queries
         result.memoryBytesEstimate = static_cast<double>(coll._size()) * coll._dim() * sizeof(float);
         result.params.emplace_back("source_file", path);
         result.params.emplace_back("inserted", std::to_string(inserted) + "/" + std::to_string(vectors.size()));
@@ -227,15 +249,50 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
     }
 }
 
-void CLI::cmd_recallFvecs(std::istringstream& args) {
-    std::string queryPath, groundtruthPath;
-    uint32_t k;
-    size_t numQueries = 100;
-    std::string label = "sift_recall";
-    if (!(args >> queryPath >> groundtruthPath >> k)) {
-        std::cout << "usage: recall <queries.fvecs> <groundtruth.ivecs> <k> [numQueries] [label]\n";
+void CLI::cmd_buildIvf(std::istringstream& args) {
+    int nlist = 0, nprobe = 0;
+    if (!(args >> nlist >> nprobe)) {
+        std::cout << "usage: build_ivf <nlist> <nprobe>\n";
         return;
     }
+    if (nlist <= 0 || nprobe <= 0) {
+        std::cout << "ERROR: nlist and nprobe must both be positive\n";
+        return;
+    }
+    if (coll._size() < static_cast<uint32_t>(nlist)) {
+        std::cout << "ERROR: collection has " << coll._size() << " vectors, need at least "
+                  << nlist << " (nlist) to build the index - load data first\n";
+        return;
+    }
+    if (nprobe > nlist) {
+        std::cout << "NOTE: nprobe > nlist, clamping nprobe to nlist = " << nlist << "\n";
+        nprobe = nlist;
+    }
+
+    std::cout << "Building IVF index: nlist=" << nlist << " nprobe=" << nprobe
+              << " over " << coll._size() << " vectors...\n" << std::flush;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    ivfIndex = std::make_unique<InvertedFileIndex>(coll, nlist, nprobe);
+    auto end = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+    std::cout << "IVF index built in " << ms << " ms. Use 'query ivf ...' or 'recall ivf ...' now.\n";
+}
+
+void CLI::cmd_recallFvecs(std::istringstream& args) {
+    std::string method, queryPath, groundtruthPath;
+    uint32_t k;
+    if (!(args >> method >> queryPath >> groundtruthPath >> k)) {
+        std::cout << "usage: recall <bf|ivf> <queries.fvecs> <groundtruth.ivecs> <k> [numQueries] [label]\n";
+        return;
+    }
+
+    Index* idx = select_index(method);
+    if (!idx) return;
+
+    size_t numQueries = 100;
+    std::string label = method + "_recall";
     args >> numQueries; // optional
     args >> label;      // optional
 
@@ -269,7 +326,7 @@ void CLI::cmd_recallFvecs(std::istringstream& args) {
             }
 
             auto start = std::chrono::high_resolution_clock::now();
-            std::vector<Neighbor> approx = index.search(queries[i], k);
+            std::vector<Neighbor> approx = idx->search(queries[i], k);
             auto end = std::chrono::high_resolution_clock::now();
             queryLatencies.push_back(std::chrono::duration<double, std::milli>(end - start).count());
 
@@ -286,12 +343,12 @@ void CLI::cmd_recallFvecs(std::istringstream& args) {
         double avgRecall = recallSum / static_cast<double>(numQueries);
         auto latStats = BenchmarkRunner::compute_stats(queryLatencies);
 
-        std::cout << "recall@" << k << " over " << numQueries << " queries = " << avgRecall << "\n";
+        std::cout << "[" << method << "] recall@" << k << " over " << numQueries << " queries = " << avgRecall << "\n";
         std::cout << "query latency p50=" << latStats.p50Ms << "ms  p95=" << latStats.p95Ms << "ms\n";
 
         BenchmarkResult result;
         result.label = label;
-        result.indexType = "brute-force";
+        result.indexType = (method == "bf") ? "brute-force" : method;
         result.numVectors = coll._size();
         result.dimension = coll._dim();
         result.k = k;
@@ -344,21 +401,25 @@ void CLI::cmd_get(std::istringstream& args) {
 }
 
 void CLI::cmd_query(std::istringstream& args) {
-    std::string vecToken;
+    std::string method, vecToken;
     uint32_t k;
-    if (!(args >> vecToken >> k)) {
-        std::cout << "usage: query <v1,v2,...,vN> <k>\n";
+    if (!(args >> method >> vecToken >> k)) {
+        std::cout << "usage: query <bf|ivf> <v1,v2,...,vN> <k>\n";
         return;
     }
+
+    Index* idx = select_index(method);
+    if (!idx) return;
+
     try {
         std::vector<float> q = parse_vector_csv(vecToken);
 
         auto start = std::chrono::high_resolution_clock::now();
-        std::vector<Neighbor> results = index.search(q, k);
+        std::vector<Neighbor> results = idx->search(q, k);
         auto end = std::chrono::high_resolution_clock::now();
         double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
-        std::cout << "Top-" << k << ", " << ms << " ms:\n";
+        std::cout << "Top-" << k << " [" << method << "], " << ms << " ms:\n";
         print_neighbors(results);
     } catch (const std::exception& e) {
         std::cout << "ERROR: " << e.what() << "\n";
@@ -376,7 +437,7 @@ void CLI::cmd_benchmark(std::istringstream& args) {
     args >> label; // optional
 
     std::cout << "Running benchmark: N=" << numVectors << " dim=" << coll._dim() << " k=" << k
-              << " label=\"" << label << "\" ... (this inserts real data into the live collection)\n";
+              << " label=\"" << label << "\" ... (this inserts real data into the live collection, brute-force only)\n";
 
     BenchmarkRunner runner(benchmarkOutputPath);
     BenchmarkResult result = runner.run_benchmark(coll, index, label, numVectors, k);
@@ -388,6 +449,11 @@ void CLI::cmd_benchmark(std::istringstream& args) {
               << "ms  p95=" << result.queryLatency.p95Ms << "ms\n";
     std::cout << "Estimated memory: " << (result.memoryBytesEstimate / (1024.0 * 1024.0)) << " MB\n";
     std::cout << "Appended results to " << benchmarkOutputPath << "\n";
+
+    if (ivfIndex) {
+        std::cout << "NOTE: benchmark inserted new data but the existing IVF index was NOT rebuilt - "
+                     "run 'build_ivf' again if you want it to include these vectors.\n";
+    }
 }
 
 void CLI::cmd_stats() const {
@@ -395,7 +461,8 @@ void CLI::cmd_stats() const {
     uint32_t size = coll._size();
     double memMB = (static_cast<double>(size) * dim * sizeof(float)) / (1024.0 * 1024.0);
     std::cout << "size=" << size << "  dimension=" << dim
-              << "  estimated_memory=" << memMB << " MB\n";
+              << "  estimated_memory=" << memMB << " MB"
+              << "  ivf_built=" << (ivfIndex ? "yes" : "no") << "\n";
 }
 
 bool CLI::execute_command(const std::string& line) {
@@ -419,6 +486,8 @@ bool CLI::execute_command(const std::string& line) {
         cmd_get(iss);
     } else if (cmd == "query") {
         cmd_query(iss);
+    } else if (cmd == "build_ivf") {
+        cmd_buildIvf(iss);
     } else if (cmd == "benchmark") {
         cmd_benchmark(iss);
     } else if (cmd == "load") {
