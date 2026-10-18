@@ -235,15 +235,11 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
         result.numVectors = vectors.size();
         result.dimension = coll._dim();
         result.k = 0; // not a query benchmark
-        result.insertLatency = insertStats;
         result.recallAtK = -1.0; // n/a — load doesn't run queries
         result.memoryBytesEstimate = static_cast<double>(coll._size()) * coll._dim() * sizeof(float);
         result.params.emplace_back("source_file", path);
         result.params.emplace_back("inserted", std::to_string(inserted) + "/" + std::to_string(vectors.size()));
 
-        BenchmarkRunner runner(benchmarkOutputPath);
-        runner.append_result_to_markdown(result);
-        std::cout << "Appended results to " << benchmarkOutputPath << "\n";
     } catch (const std::exception& e) {
         std::cout << "ERROR: " << e.what() << "\n";
     }
@@ -443,8 +439,6 @@ void CLI::cmd_benchmark(std::istringstream& args) {
     BenchmarkResult result = runner.run_benchmark(coll, index, label, numVectors, k);
     runner.append_result_to_markdown(result);
 
-    std::cout << "Insert latency  p50=" << result.insertLatency.p50Ms
-              << "ms  p95=" << result.insertLatency.p95Ms << "ms\n";
     std::cout << "Query  latency  p50=" << result.queryLatency.p50Ms
               << "ms  p95=" << result.queryLatency.p95Ms << "ms\n";
     std::cout << "Estimated memory: " << (result.memoryBytesEstimate / (1024.0 * 1024.0)) << " MB\n";

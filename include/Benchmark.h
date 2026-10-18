@@ -22,7 +22,6 @@ struct BenchmarkResult {
     size_t numVectors = 0;
     uint32_t dimension = 0;
     uint32_t k = 0;
-    LatencyStats insertLatency;
     LatencyStats queryLatency;
     double memoryBytesEstimate = 0.0; // size * dim * sizeof(float); collection has no memory getter
     double recallAtK = -1.0;          // -1.0 means not measured 

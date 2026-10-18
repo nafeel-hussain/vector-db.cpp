@@ -92,17 +92,6 @@ BenchmarkResult BenchmarkRunner::run_benchmark(collection& coll,
     auto vectors = generate_random_vectors(numVectors, coll._dim(), seed);
     auto ids = generate_Ids(numVectors, "bench_" + label, seed);
 
-    // Insert latency: per-call timing
-    std::vector<double> insertLatencies;
-    insertLatencies.reserve(numVectors);
-    for (size_t i = 0; i < numVectors; ++i) {
-        auto start = Clock::now();
-        coll.insert_vector(ids[i], vectors[i]);
-        auto end = Clock::now();
-        insertLatencies.push_back(std::chrono::duration<double, std::milli>(end - start).count());
-    }
-    result.insertLatency = compute_stats(insertLatencies);
-
     // Query latency 
     std::mt19937 rng(seed + 1);
     std::uniform_int_distribution<size_t> pick(0, numVectors - 1);
@@ -161,17 +150,17 @@ void BenchmarkRunner::append_result_to_markdown(const BenchmarkResult& result) {
     double memMB = result.memoryBytesEstimate / (1024.0 * 1024.0);
 
     out << "### " << result.label << " (" << result.indexType << ")\n\n";
-    out << "| N | dim | k | insert p50 (ms) | insert p95 (ms) | query p50 (ms) | query p95 (ms) | "
+    out << "| N | dim | k | query p50 (ms) | query p95 (ms) | query p99 (ms) |  avg (ms) | "
            "recall@k | est. memory (MB) |\n";
     out << "|---|-----|---|------------------|------------------|-----------------|-----------------|"
            "----------|-------------------|\n";
     out << "| " << result.numVectors
         << " | " << result.dimension
         << " | " << result.k
-        << " | " << result.insertLatency.p50Ms
-        << " | " << result.insertLatency.p95Ms
         << " | " << result.queryLatency.p50Ms
         << " | " << result.queryLatency.p95Ms
+        << " | " << result.queryLatency.p99Ms
+        << " | " << result.queryLatency.avgMs
         << " | " << (result.recallAtK < 0.0 ? std::string("n/a") : std::to_string(result.recallAtK))
         << " | " << memMB
         << " |\n\n";
