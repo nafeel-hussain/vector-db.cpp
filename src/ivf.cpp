@@ -7,6 +7,9 @@
 InvertedFileIndex::InvertedFileIndex(const collection &collection, int nlist, int nprobe):
 Index(collection), nlist(nlist), nprobe(nprobe){
 
+    VDB_ASSERT(nlist > 0, "IVF needs at least one list");
+    VDB_ASSERT(nprobe > 0 && nprobe <= nlist, "IVF nprobe must be in [1, nlist]");
+    VDB_ASSERT(coll._dim() > 0, "IVF collection dimension must be positive");
     uint32_t dim = coll._dim();
     std::vector<float> trainBuffer;         // all living vectors into a vector float
     std::vector<uint32_t> aliveIdx;         // translation table: buffer row → collection index
@@ -20,20 +23,32 @@ Index(collection), nlist(nlist), nprobe(nprobe){
         aliveIdx.push_back(i);
     }
 
+    VDB_ASSERT(aliveIdx.size() >= static_cast<size_t>(nlist),
+               "IVF needs at least nlist live vectors for training");
+    DLOG("building IVF index with " << aliveIdx.size() << " live vectors, "
+              << nlist << " lists and " << nprobe << " probes");
     kmeans km(nlist, 20, static_cast<int>(dim));
     km.fit_(trainBuffer);
 
     centroids = km.get_centroids();
 
     const std::vector<int> &assignments = km.get_assignments();
+    VDB_ASSERT(assignments.size() == aliveIdx.size(),
+               "IVF training assignments do not match live vector count");
     InvertedList.assign(nlist, {});
     for(size_t row = 0 ; row < aliveIdx.size() ; ++row){
         int cluster = assignments[row];
+        VDB_ASSERT(cluster >= 0 && cluster < nlist, "k-means returned an invalid cluster assignment");
         InvertedList[cluster].push_back(aliveIdx[row]);
     }
+    VDB_ASSERT(InvertedList.size() == static_cast<size_t>(nlist), "IVF list count is inconsistent");
+    DLOG("finished building IVF index");
 }
 
 std::vector<int> InvertedFileIndex::findNearestCentroids(const std::vector<float> &queryVector) const{
+    VDB_ASSERT(queryVector.size() == coll._dim(), "query dimension does not match IVF collection");
+    VDB_ASSERT(centroids.size() == static_cast<size_t>(nlist), "IVF centroid count is inconsistent");
+    VDB_ASSERT(nprobe > 0 && nprobe <= nlist, "IVF nprobe must be in [1, nlist]");
     auto cmp = [&](const auto& a, const auto& b) { return a.first < b.first; };
     std::priority_queue<
         std::pair<float, int>,
@@ -62,6 +77,7 @@ std::vector<int> InvertedFileIndex::findNearestCentroids(const std::vector<float
 }
 
 std::vector<Neighbor> InvertedFileIndex::searchClusters(const std::vector<float> &queryVector, const uint32_t k, const std::vector<int> &clusterIdx) const{
+    VDB_ASSERT(queryVector.size() == coll._dim(), "query dimension does not match IVF collection");
     auto cmp = [](const auto& a, const auto& b) { return a.first < b.first; };
     std::priority_queue<
         std::pair<float, uint32_t>,
@@ -70,6 +86,7 @@ std::vector<Neighbor> InvertedFileIndex::searchClusters(const std::vector<float>
     > topK(cmp);
 
     for(int c : clusterIdx){
+        VDB_ASSERT(c >= 0 && c < nlist, "IVF search received an invalid cluster index");
         for(uint32_t idx : InvertedList[c]){
             if(coll._isdead(idx)) continue; 
 
@@ -96,6 +113,10 @@ std::vector<Neighbor> InvertedFileIndex::searchClusters(const std::vector<float>
 }
 
 std::vector<Neighbor> InvertedFileIndex::search(const std::vector<float> &queryVector, const uint32_t k){
+    DLOG("IVF search requested with k=" << k);
     std::vector<int> probes = findNearestCentroids(queryVector);
-    return searchClusters(queryVector, k, probes);
+    std::vector<Neighbor> results = searchClusters(queryVector, k, probes);
+    DLOG("IVF search inspected " << probes.size() << " lists and returned " << results.size()
+              << " neighbors");
+    return results;
 }

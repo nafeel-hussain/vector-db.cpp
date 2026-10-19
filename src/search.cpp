@@ -1,11 +1,14 @@
 #include "search.hpp"
 #include "distance.hpp"
+#include "debug.h"
 
 std::vector<Neighbor> BruteForceSearch::search(const std::vector<float> &queryVector, const uint32_t k){
     // This search calculates distance between queryVector and each vector in collection
     // Then ranks them for shortest distance and returns k closest vectors to it.
     // distance(v[0])<distance(v[1])<...
 
+    VDB_ASSERT(queryVector.size() == coll._dim(), "query dimension does not match collection");
+    DLOG("brute-force search requested with k=" << k << " over " << coll._size() << " vectors");
     auto cmp = [](const auto& a, const auto& b) { return a.first < b.first; };
     std::priority_queue<
         std::pair<float, uint32_t>, 
@@ -41,5 +44,6 @@ std::vector<Neighbor> BruteForceSearch::search(const std::vector<float> &queryVe
     }
 
     std::reverse(returnVector.begin(), returnVector.end()); 
+    DLOG("brute-force search returned " << returnVector.size() << " neighbors");
     return returnVector;
 }

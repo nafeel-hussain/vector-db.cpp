@@ -14,7 +14,11 @@ class kmeans{
     public:
     kmeans(int nclusters = 50, int maxIter = 20, int dim = 128):
     nclusters(nclusters), maxIter(maxIter), dim(dim) {
+        VDB_ASSERT(nclusters > 0, "k-means needs at least one cluster");
+        VDB_ASSERT(maxIter > 0, "k-means needs at least one iteration");
+        VDB_ASSERT(dim > 0, "k-means dimension must be positive");
         center.resize(nclusters, std::vector<float>(dim, 0.0f));
+        DLOG("created k-means with " << nclusters << " clusters, dimension " << dim);
     }
 
     const std::vector<std::vector<float>>& get_centroids() const { return center; }

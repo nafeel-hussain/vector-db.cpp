@@ -2,6 +2,7 @@
 // Parses args and starts the CLI.
 
 #include "CLI.h"
+#include "debug.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -23,6 +24,7 @@ int main(int argc, char** argv) {
         }
     }
 
+    DLOG("starting vector database CLI with dimension " << dim);
     CLI cli(dim, benchmarkPath);
     cli._run();
 

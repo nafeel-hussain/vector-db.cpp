@@ -1,16 +1,20 @@
 #include "Benchmark.h"
+#include "debug.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <fstream>
 #include <random>
+#include <stdexcept>
 #include <unordered_set>
 
 using Clock = std::chrono::high_resolution_clock;
 
 BenchmarkRunner::BenchmarkRunner(const std::string& outputMarkdownPath)
     : outputPath(outputMarkdownPath) {
+    VDB_ASSERT(!outputPath.empty(), "benchmark output path must not be empty");
     ensure_file_exists();
+    DLOG("benchmark output path is '" << outputPath << "'");
 }
 
 void BenchmarkRunner::ensure_file_exists() {
@@ -24,6 +28,7 @@ void BenchmarkRunner::ensure_file_exists() {
 }
 
 std::vector<std::vector<float>> BenchmarkRunner::generate_random_vectors(size_t count, uint32_t dim, unsigned seed) {
+    VDB_ASSERT(dim > 0, "random vectors need a positive dimension");
     std::mt19937 rng(seed);
     std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
 
@@ -58,6 +63,8 @@ LatencyStats BenchmarkRunner::compute_stats(std::vector<double>& latenciesMs) {
         double idx = p * (static_cast<double>(latenciesMs.size()) - 1.0);
         size_t lo = static_cast<size_t>(std::floor(idx));
         size_t hi = static_cast<size_t>(std::ceil(idx));
+        VDB_ASSERT(lo < latenciesMs.size() && hi < latenciesMs.size(),
+                   "latency percentile index is out of range");
         if (lo == hi) return latenciesMs[lo];
         double frac = idx - static_cast<double>(lo);
         return latenciesMs[lo] * (1.0 - frac) + latenciesMs[hi] * frac;
@@ -83,6 +90,13 @@ BenchmarkResult BenchmarkRunner::run_benchmark(collection& coll,
                                                     uint32_t k,
                                                     size_t numQueries,
                                                     unsigned seed) {
+    if (numVectors == 0)
+        throw std::invalid_argument("benchmark requires at least one query vector");
+    if (numQueries == 0)
+        throw std::invalid_argument("benchmark requires at least one query");
+    VDB_ASSERT(coll._dim() > 0, "benchmark collection dimension must be positive");
+    DLOG("running benchmark '" << label << "' with " << numVectors << " vectors and "
+              << numQueries << " queries");
     BenchmarkResult result;
     result.label = label;
     result.numVectors = numVectors;
@@ -91,6 +105,7 @@ BenchmarkResult BenchmarkRunner::run_benchmark(collection& coll,
 
     auto vectors = generate_random_vectors(numVectors, coll._dim(), seed);
     auto ids = generate_Ids(numVectors, "bench_" + label, seed);
+    VDB_ASSERT(vectors.size() == ids.size(), "benchmark vector/id counts do not match");
 
     // Query latency 
     std::mt19937 rng(seed + 1);
@@ -109,6 +124,8 @@ BenchmarkResult BenchmarkRunner::run_benchmark(collection& coll,
     result.queryLatency = compute_stats(queryLatencies);
 
     result.memoryBytesEstimate = coll._memory();
+    DLOG("finished benchmark '" << label << "'; p50 latency="
+              << result.queryLatency.p50Ms << "ms");
 
     return result;
 }

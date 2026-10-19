@@ -18,5 +18,8 @@ class InvertedFileIndex: public Index{
     std::vector<Neighbor> search(const std::vector<float> &queryVector,const uint32_t k) override;
     int get_nlist() const { return nlist; }
     int get_nprobe() const { return nprobe; }
-    void set_nprobe(int nprobe_) { nprobe = nprobe_; }
+    void set_nprobe(int nprobe_) {
+        VDB_ASSERT(nprobe_ > 0 && nprobe_ <= nlist, "nprobe must be in [1, nlist]");
+        nprobe = nprobe_;
+    }
 };

@@ -1,5 +1,6 @@
 #include "CLI.h"
 #include "Benchmark.h"
+#include "debug.h"
 
 #include <algorithm>
 #include <chrono>
@@ -12,7 +13,10 @@
 CLI::CLI(uint32_t dim, std::string benchmarkOutputPath_)
     : coll(dim),
       index(coll),
-      benchmarkOutputPath(std::move(benchmarkOutputPath_)) {}
+      benchmarkOutputPath(std::move(benchmarkOutputPath_)) {
+    VDB_ASSERT(dim > 0, "CLI collection dimension must be positive");
+    DLOG("initialized CLI with dimension " << dim);
+}
 
 std::vector<float> CLI::parse_vector_csv(const std::string& token) {
     std::vector<float> v;
@@ -22,6 +26,7 @@ std::vector<float> CLI::parse_vector_csv(const std::string& token) {
         if (piece.empty()) continue;
         v.push_back(std::stof(piece));
     }
+    DLOG("parsed vector with " << v.size() << " dimensions");
     return v;
 }
 
@@ -83,11 +88,14 @@ void CLI::cmd_insert(std::istringstream& args) {
         double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
         if (ok) {
+            DLOG("CLI inserted vector id '" << id << "'");
             std::cout << "OK inserted id=" << id << " dim=" << v.size() << " (" << ms << " ms)\n";
         } else {
+            DLOG("CLI insert failed for vector id '" << id << "'");
             std::cout << "FAILED to insert id=" << id << " (dimension mismatch or duplicate id?)\n";
         }
     } catch (const std::exception& e) {
+        DLOG("CLI vector parsing failed: " << e.what());
         std::cout << "ERROR parsing vector: " << e.what() << "\n";
     }
 }
@@ -141,6 +149,8 @@ void CLI::cmd_bulkInsert(std::istringstream& args) {
               << " (" << ms << " ms total"
               << (total ? (", " + std::to_string(ms / static_cast<double>(total)) + " ms/vector avg)") : ")")
               << "\n";
+    DLOG("bulk insert completed: " << inserted << "/" << total
+              << " inserted; " << parseErrors << " parse errors");
 }
 
 std::vector<std::vector<float>> CLI::read_fvecs(const std::string& path) {
@@ -240,6 +250,7 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
         result.params.emplace_back("inserted", std::to_string(inserted) + "/" + std::to_string(vectors.size()));
 
     } catch (const std::exception& e) {
+        DLOG("fvecs load failed: " << e.what());
         std::cout << "ERROR: " << e.what() << "\n";
     }
 }
@@ -254,8 +265,12 @@ void CLI::cmd_buildIvf(std::istringstream& args) {
         std::cout << "ERROR: nlist and nprobe must both be positive\n";
         return;
     }
-    if (coll._size() < static_cast<uint32_t>(nlist)) {
-        std::cout << "ERROR: collection has " << coll._size() << " vectors, need at least "
+    size_t liveVectors = 0;
+    for (uint32_t i = 0; i < coll._size(); ++i) {
+        if (!coll._isdead(i)) ++liveVectors;
+    }
+    if (liveVectors < static_cast<size_t>(nlist)) {
+        std::cout << "ERROR: collection has " << liveVectors << " live vectors, need at least "
                   << nlist << " (nlist) to build the index - load data first\n";
         return;
     }
@@ -265,7 +280,7 @@ void CLI::cmd_buildIvf(std::istringstream& args) {
     }
 
     std::cout << "Building IVF index: nlist=" << nlist << " nprobe=" << nprobe
-              << " over " << coll._size() << " vectors...\n" << std::flush;
+              << " over " << liveVectors << " live vectors...\n" << std::flush;
 
     auto start = std::chrono::high_resolution_clock::now();
     ivfIndex = std::make_unique<InvertedFileIndex>(coll, nlist, nprobe);
@@ -273,6 +288,7 @@ void CLI::cmd_buildIvf(std::istringstream& args) {
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
     std::cout << "IVF index built in " << ms << " ms. Use 'query ivf ...' or 'recall ivf ...' now.\n";
+    DLOG("IVF build completed in " << ms << "ms");
 }
 
 void CLI::cmd_setnprobe(std::istringstream& args) {
@@ -420,6 +436,7 @@ void CLI::cmd_get(std::istringstream& args) {
         }
         std::cout << "]\n";
     } catch (const std::exception& e) {
+        DLOG("CLI vector lookup failed: " << e.what());
         std::cout << "NOT FOUND id=" << id << " (" << e.what() << ")\n";
     }
 }
@@ -437,6 +454,12 @@ void CLI::cmd_query(std::istringstream& args) {
 
     try {
         std::vector<float> q = parse_vector_csv(vecToken);
+        if (q.size() != coll._dim()) {
+            std::cout << "ERROR: query dimension " << q.size()
+                      << " does not match collection dimension " << coll._dim() << "\n";
+            return;
+        }
+        DLOG("CLI query using " << method << " with k=" << k);
 
         auto start = std::chrono::high_resolution_clock::now();
         std::vector<Neighbor> results = idx->search(q, k);
@@ -446,6 +469,7 @@ void CLI::cmd_query(std::istringstream& args) {
         std::cout << "Top-" << k << " [" << method << "], " << ms << " ms:\n";
         print_neighbors(results);
     } catch (const std::exception& e) {
+        DLOG("CLI query failed: " << e.what());
         std::cout << "ERROR: " << e.what() << "\n";
     }
 }
@@ -463,14 +487,20 @@ void CLI::cmd_benchmark(std::istringstream& args) {
     std::cout << "Running benchmark: N=" << numVectors << " dim=" << coll._dim() << " k=" << k
               << " label=\"" << label << "\" ... (this inserts real data into the live collection, brute-force only)\n";
 
-    BenchmarkRunner runner(benchmarkOutputPath);
-    BenchmarkResult result = runner.run_benchmark(coll, index, label, numVectors, k);
-    runner.append_result_to_markdown(result);
+    try {
+        BenchmarkRunner runner(benchmarkOutputPath);
+        BenchmarkResult result = runner.run_benchmark(coll, index, label, numVectors, k);
+        runner.append_result_to_markdown(result);
 
-    std::cout << "Query  latency  p50=" << result.queryLatency.p50Ms
-              << "ms  p95=" << result.queryLatency.p95Ms << "ms\n";
-    std::cout << "Estimated memory: " << (result.memoryBytesEstimate / (1024.0 * 1024.0)) << " MB\n";
-    std::cout << "Appended results to " << benchmarkOutputPath << "\n";
+        std::cout << "Query  latency  p50=" << result.queryLatency.p50Ms
+                  << "ms  p95=" << result.queryLatency.p95Ms << "ms\n";
+        std::cout << "Estimated memory: " << (result.memoryBytesEstimate / (1024.0 * 1024.0)) << " MB\n";
+        std::cout << "Appended results to " << benchmarkOutputPath << "\n";
+    } catch (const std::exception& e) {
+        DLOG("benchmark failed: " << e.what());
+        std::cout << "ERROR: " << e.what() << "\n";
+        return;
+    }
 
     if (ivfIndex) {
         std::cout << "NOTE: benchmark inserted new data but the existing IVF index was NOT rebuilt - "
@@ -493,6 +523,7 @@ bool CLI::execute_command(const std::string& line) {
     iss >> cmd;
 
     if (cmd.empty()) return true;
+    DLOG("executing CLI command '" << cmd << "'");
 
     if (cmd == "exit" || cmd == "quit") {
         return false;
