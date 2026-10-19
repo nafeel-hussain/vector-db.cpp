@@ -16,4 +16,7 @@ class InvertedFileIndex: public Index{
     public:
     InvertedFileIndex(const collection &collection, int nlist, int nprobe);
     std::vector<Neighbor> search(const std::vector<float> &queryVector,const uint32_t k) override;
+    int get_nlist() const { return nlist; }
+    int get_nprobe() const { return nprobe; }
+    void set_nprobe(int nprobe_) { nprobe = nprobe_; }
 };
