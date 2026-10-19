@@ -13,7 +13,7 @@ bool collection::insert_vector(const string &id, const vector<float> &inputVecto
     maps[id]=data.size();
     isdead.push_back(false);
     idmap.push_back(id);
-    for(int i = 0 ; i < inputVector.size() ; ++i)
+    for(size_t i = 0 ; i < inputVector.size() ; ++i)
         data.push_back(inputVector[i]);
     return true;
 }
@@ -42,7 +42,7 @@ vector<float> collection :: get_vector(const string &id) const{
     if(isdead[index])
         return returnVector; //todo
 
-    for(int i = 0 ; i < dim ; i++){
+    for(size_t i = 0 ; i < dim ; i++){
         returnVector[i] = data[offset + i];
     }
     return returnVector;

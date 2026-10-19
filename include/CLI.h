@@ -18,6 +18,8 @@ Commands:
                                        must be run after data is loaded, before 'query ivf'
                                        or 'recall ivf' will work
 
+  set_nprobe <nprobe>                  change nprobe for the existing IVF index
+
   benchmark <numVectors> <k> [label]   scale benchmark -> BENCHMARKS.md (dim fixed at startup,
                                        always runs against brute-force)
 
@@ -64,6 +66,7 @@ private:
     void cmd_remove(std::istringstream& args);
     void cmd_get(std::istringstream& args);
     void cmd_buildIvf(std::istringstream& args);
+    void cmd_setnprobe(std::istringstream& args);
     void cmd_query(std::istringstream& args);
     void cmd_benchmark(std::istringstream& args);
     void cmd_loadFvecs(std::istringstream& args);

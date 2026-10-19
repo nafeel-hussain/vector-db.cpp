@@ -60,6 +60,7 @@ void CLI::print_help() const {
         "  get <id>                            print the stored vector for id\n"
         "  query <bf|ivf> <v1,...,vN> <k>      top-k nearest neighbors via the chosen method\n"
         "  build_ivf <nlist> <nprobe>          (re)build the IVF index from current data\n"
+        "  set_nprobe <nprobe>                  change nprobe for the existing IVF index\n"
         "  benchmark <numVectors> <k> [label]  scale benchmark -> BENCHMARKS.md (brute-force)\n"
         "  load <path>                   bulk-load a .fvecs file (ids = row index)\n"
         "  recall <bf|ivf> <q.fvecs> <gt.ivecs> <k> [n] [label]  recall@k against groundtruth\n"
@@ -227,8 +228,6 @@ void CLI::cmd_loadFvecs(std::istringstream& args) {
                          "want 'query ivf' / 'recall ivf' to see them.\n";
         }
 
-        auto insertStats = BenchmarkRunner::compute_stats(insertLatencies);
-
         BenchmarkResult result;
         result.label = label;
         result.indexType = "brute-force";
@@ -274,6 +273,35 @@ void CLI::cmd_buildIvf(std::istringstream& args) {
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
 
     std::cout << "IVF index built in " << ms << " ms. Use 'query ivf ...' or 'recall ivf ...' now.\n";
+}
+
+void CLI::cmd_setnprobe(std::istringstream& args) {
+    int nprobe = 0;
+    if (!(args >> nprobe)) {
+        std::cout << "usage: set_nprobe <nprobe>\n";
+        return;
+    }
+    if (nprobe <= 0) {
+        std::cout << "ERROR: nprobe must be positive\n";
+        return;
+    }
+    if(ivfIndex == nullptr) {
+        std::cout << "ERROR: IVF index not built yet. Use 'build_ivf <nlist> <nprobe>' first.\n";
+        return;
+    }
+    if (nprobe > ivfIndex->get_nlist()) {
+        std::cout << "NOTE: nprobe > nlist, clamping nprobe to nlist = " << ivfIndex->get_nlist() << "\n";
+        nprobe = ivfIndex->get_nlist();
+    }  
+
+    std::cout << "IVF nprobe set to " << nprobe << std::flush;
+
+    auto start = std::chrono::high_resolution_clock::now();
+    ivfIndex->set_nprobe(nprobe);
+    auto end = std::chrono::high_resolution_clock::now();
+    double ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+    std::cout << "IVF index nprobe updated in " << ms << " ms. Use 'query ivf ...' or 'recall ivf ...' now.\n";
 }
 
 void CLI::cmd_recallFvecs(std::istringstream& args) {
@@ -482,6 +510,8 @@ bool CLI::execute_command(const std::string& line) {
         cmd_query(iss);
     } else if (cmd == "build_ivf") {
         cmd_buildIvf(iss);
+    } else if (cmd == "set_nprobe") {
+        cmd_setnprobe(iss);
     } else if (cmd == "benchmark") {
         cmd_benchmark(iss);
     } else if (cmd == "load") {
